@@ -2,7 +2,41 @@
 
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const validate = require('mongoose-validator');
 const User = require('../models/User');
+
+// On réutilise mongoose-validator,
+const REGLES_DU_MOT_DE_PASSE = [
+  validate({
+    validator: 'isLength',
+    arguments: [8, 72],
+    message: 'Le mot de passe doit contenir entre 8 et 72 caractères',
+  }),
+  validate({
+    validator: 'matches',
+    arguments: [/[a-z]/],
+    message: 'Le mot de passe doit contenir au moins une minuscule',
+  }),
+  validate({
+    validator: 'matches',
+    arguments: [/[A-Z]/],
+    message: 'Le mot de passe doit contenir au moins une majuscule',
+  }),
+  validate({
+    validator: 'matches',
+    arguments: [/[0-9]/],
+    message: 'Le mot de passe doit contenir au moins un chiffre',
+  }),
+];
+
+const verifierLeMotDePasse = (motDePasse) => {
+  if (typeof motDePasse !== 'string') {
+    return 'Le mot de passe est obligatoire';
+  }
+
+  const regleNonRespectee = REGLES_DU_MOT_DE_PASSE.find((regle) => !regle.validator(motDePasse));
+  return regleNonRespectee ? regleNonRespectee.message : null;
+};
 
 // POST /api/auth/signup
 // Crée un nouveau compte utilisateur, avec un mot de passe haché
@@ -10,6 +44,14 @@ const User = require('../models/User');
 exports.signup = (req, res) => {
   const motDePasseEnClair = req.body.password;
   const nombreDeToursDeHachage = 10;
+
+  // Si le mot de passe ne convient pas, on arrête tout de suite : inutile de
+  // le hacher puis d'interroger la base de données.
+  const erreurDeMotDePasse = verifierLeMotDePasse(motDePasseEnClair);
+  if (erreurDeMotDePasse) {
+    res.status(400).json({ message: erreurDeMotDePasse });
+    return;
+  }
 
   // bcrypt.hash chiffre le mot de passe de façon irréversible : même en
   // lisant la base de données, personne ne peut retrouver le mot de passe
@@ -27,6 +69,14 @@ exports.signup = (req, res) => {
           res.status(201).json({ message: 'Utilisateur créé' });
         })
         .catch((erreur) => {
+          // Mongoose lève une ValidationError quand une règle du schéma n'est
+          // pas respectée (email invalide, email déjà utilisé...). On renvoie
+          // alors le message de la règle plutôt que l'objet d'erreur complet.
+          if (erreur.name === 'ValidationError') {
+            const premiereErreur = Object.values(erreur.errors)[0];
+            res.status(400).json({ message: premiereErreur.message });
+            return;
+          }
           res.status(400).json({ error: erreur });
         });
     })
